@@ -15,25 +15,42 @@ medium.density = 1000;      % Density of water (kg/m^3)
 
 % Define time array (automatically determined for stability)
 % kgrid.makeTime(medium.sound_speed);
-t_end = 4e-4;
-kgrid.t_array = makeTime(kgrid, medium.sound_speed, [], t_end)
+t_end = 2.5e-4;
+kgrid.t_array = makeTime(kgrid, medium.sound_speed, [], t_end);
 
 % Define source (transducer emitting a pressure wave)
 source.p_mask = zeros(Nx, Ny);
-source.p_mask(0, Ny/4) = 1; % Place source 1/4th from top
+source_x = Nx * 1.25/4;
+source_y = Ny * 3/4;
+source.p_mask(source_x, source_y) = 1; % Place source 1/4th from top
+disp(["Source: ", num2str(source_x), num2str(source_y)])
 
 % Define source signal (tone burst)
-freq = 10e3;  % 100 kHz frequency
-n_cycles = 2;  % Number of wave cycles
+freq = 100e3;  % 100 kHz frequency
+n_cycles = 20;  % Number of wave cycles
 source.p = sin(2 * pi * freq * kgrid.t_array) .* (kgrid.t_array < (n_cycles / freq));
 
 % Define a single sensor (hydrophone sensor array)
 num_sensors = 10;
-sensor_x = linspace(Nx/4, 3*Nx/4, num_sensors); % Evenly spaced along x-axis
-sensor_y = Ny - 10; % Fixed y position (10 pixels from bottom)
+
+% Calculate the wavelength
+lambda = (medium.sound_speed / freq);
+max_sensor_spacing = lambda / 2; % Calculate the maximum allowable spacing between sensors (half the wavelength)
+array_center = Nx / 2;           % Define the center of the array
+
+% Calculate the total length of the sensor array
+sensor_array_length = (num_sensors - 1) * max_sensor_spacing / dx;
+
+% Ensure the array is centered at Nx/2
+sensor_x_start = array_center - sensor_array_length / 2;
+sensor_x_end = array_center + sensor_array_length / 2;
+
+% Generate sensor positions symmetrically around the center
+sensor_x = linspace(sensor_x_start, sensor_x_end, num_sensors);
+sensor_y = linspace(Ny * 5/10, Ny * 5/10, num_sensors); % Fixed y position (10 pixels from bottom)
 
 % Convert to indices
-sensor_positions = sub2ind([Nx, Ny], round(sensor_x), repmat(sensor_y, size(sensor_x)));
+sensor_positions = sub2ind([Nx, Ny], round(sensor_x), round(sensor_y));
 
 % Assign sensor mask
 sensor.mask = zeros(Nx, Ny);
@@ -41,60 +58,62 @@ sensor.mask(sensor_positions) = 1; % Activate sensor locations
 
 % Run the simulation
 input_args = {'PMLSize', 20, 'PlotSim', true, 'DataCast', 'single'};
-sensor_data = kspaceFirstOrder2D(kgrid, medium, source, sensor); % , input_args{:}
-% sensor_data = reshape(sensor_data, Nx, Ny, kgrid.Nt);
-% size(sensor_data)
+sensor_data = kspaceFirstOrder2D(kgrid, medium, source, sensor, input_args{:}); % , input_args{:}
 
-
-% ========== MATH STUFF ==========
-arrival_times = zeros(num_sensors, 1);
-for i = 1:num_sensors
-    % Find the first peak in the signal (arrival time)
-    [~, peak_index] = max(abs(sensor_data(i, :)));
-    arrival_times(i) = kgrid.t_array(peak_index);
-end
-
-% Plot sensor data
-figure;
-imagesc(kgrid.t_array * 1e6, sensor_x * dx * 1e3, sensor_data); % Scale axes
-xlabel('Time [\mus]');
-ylabel('Sensor Position [mm]');
-title('Recorded Pressure at Sensor Array');
-colorbar;
-
-% 3D Wave Plot
-% N = 10;
+% % Ground truth
+% sensor_x_center = mean(sensor_x);  % Center of the sensor array along x-axis
+% sensor_y_center = sensor_y;        % Fixed y position for all sensors
 % 
-% % Find the global min and max pressure values over the entire simulation
-% min_pressure = min(sensor_data(:));
-% max_pressure = max(sensor_data(:));
+% % Calculate the true angle of arrival using atan2
+% true_AoA = atan2(source_y - sensor_y_center, source_x - sensor_x_center);
+% true_AoA_deg = rad2deg(true_AoA) - 90; % Convert to degrees, and make -90 to 90
 % 
+% % Display the true AoA
+% disp(['True AoA: ', num2str(true_AoA_deg(1)), ' degrees']); % Display AoA relative to center of array
+% 
+% % Plot
 % figure;
-% % Plot a sample frame to create the initial plot and color bar
-% h = surf(kgrid.x_vec * 1e3, kgrid.y_vec * 1e3, sensor_data(:, :, 1)); % Scale to mm
-% shading interp;  % Smooth the surface
-% colormap(jet);
+% imagesc(kgrid.t_array * 1e6, sensor_x * dx * 1e3, sensor_data); % Scale axes
+% xlabel('Time [\mus]');
+% ylabel('Sensor Position [mm]');
+% title('Recorded Pressure at Sensor Array');
 % colorbar;
+
+% ============= MATH =============
+% L = max_sensor_spacing;
+% N = num_sensors;
+% angles = -90:1:90;
+% theta_scan = deg2rad(angles);
 % 
-% % Set the color axis limits and z-axis limits
-% caxis([min_pressure, max_pressure]); % Fix the color range
-% zlim([min_pressure, max_pressure]); % Fix the z-axis range
-% 
-% % Label the axes
-% xlabel('x [mm]');
-% ylabel('y [mm]');
-% zlabel('Pressure');
-% title(['Time Step: 1']);
-% 
-% % Loop through the time steps and update the surface plot
-% for t = 1:N:kgrid.Nt
-%     % Update the surface plot with new data for the current time step
-%     set(h, 'ZData', sensor_data(:, :, t)); % Update the Z data of the surface plot
-% 
-%     % Update the title for the current time step
-%     title(['Time Step: ', num2str(t)]);
-% 
-%     % Pause to control the animation speed
-%     pause(0.05); % Adjust speed (0.05 sec per frame)
+% if (L / lambda) > 0.5
+%     warning("Sensor spacing is greater than λ/2. Aliasing may be occurring.");
 % end
 % 
+% % Steering vector computation
+% sensor_indices = 0:N-1; % Centered around zero
+% 
+% % Compute the steering vectors
+% % Broadcast the sensor indices and angle data properly
+% steering_vectors = exp(1j * 2 * pi * (L / lambda) * sin(theta_scan).' * (0:N-1));
+% 
+% disp(["Steering vectors size: ", size(steering_vectors)]);
+% disp(["Sensor data size: ", size(sensor_data)]);
+% 
+% % Beamforming
+% beamforming_output = zeros(size(angles));
+% for i = 1:length(angles)
+%     beamforming_output(i) = sum(abs(steering_vectors(i,:) * sensor_data));
+% end
+% 
+% spatial_frequencies = (L / lambda) * sin(theta_scan);
+% plot(spatial_frequencies, beamforming_output);
+% xlabel("Spatial Frequency");
+% ylabel("Beamforming Power");
+% title("Beamforming Output vs Spatial Frequency");
+% 
+% 
+% % Find the angle that maximizes beamforming output
+% [~, idx] = max(beamforming_output);
+% estimated_angle = angles(idx);
+% 
+% fprintf("Estimated AoA: %.2f degrees\n", estimated_angle);

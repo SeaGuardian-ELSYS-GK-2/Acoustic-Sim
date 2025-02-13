@@ -1,3 +1,14 @@
+% Given values
+c = 1500;   % m/s
+fs = 1 / kgrid.dt; % Hz
+N = num_sensors;
+lambda = (medium.sound_speed / freq); % meters
+L = lambda/2;
+
+% Convert back to meters
+sensor_x_phys = sensor_x * dx;
+sensor_y_phys = sensor_y * dy;
+
 % Ground truth
 sensor_x_center = mean(sensor_x);  % Center of the sensor array along x-axis
 sensor_y_center = sensor_y;        % Fixed y position for all sensors
@@ -9,42 +20,35 @@ true_AoA_deg = rad2deg(true_AoA) - 90; % Convert to degrees, and make -90 to 90
 % Display the true AoA
 disp(['True AoA: ', num2str(true_AoA_deg(1)), ' degrees']); % Display AoA relative to center of array
 
-% Plot
+% Estimation
+% Create UCA
+array = phased.ConformalArray('ElementPosition', [sensor_x_phys; sensor_y_phys; zeros(1,N)]);
+
+% Visualize the array
 figure;
-imagesc(kgrid.t_array * 1e6, sensor_x * dx * 1e3, sensor_data); % Scale axes
-xlabel('Time [\mus]');
-ylabel('Sensor Position [mm]');
-title('Recorded Pressure at Sensor Array');
-colorbar;
+scatter(sensor_x_phys, sensor_y_phys, 'filled');
+hold on;
+plot([sensor_x_phys sensor_x_phys(1)], [sensor_y_phys sensor_y_phys(1)], 'r--');  % Connect points
+xlabel('X (m)'); ylabel('Y (m)'); title('Uniform Circular Array (UCA)');
+axis equal; grid on;
 
-% ============= MATH =============
-L = max_sensor_spacing;
-N = num_sensors;
-angles = -90:0.1:90;
-theta_scan = deg2rad(angles);
+% Create a MUSIC DoA estimator for a UCA
+estimator = phased.MUSICEstimator2D('SensorArray', array, ...
+    'PropagationSpeed', c, 'AzimuthScanAngles', [-180:180], ...
+    'OperatingFrequency', fs, 'DOAOutputPort', true, 'NumSignals', 1);
 
-if (L / lambda) > 0.5
-    warning("Sensor spacing is greater than λ/2. Aliasing may be occurring.");
-end
+% Estimate DoA using received data
+angles = estimator(sensor_data.');
+angles_deg = rad2deg(angles);
+disp(['Estimated DOA: ', num2str(angles_deg), ' degrees']);
 
-% Steering vector computation
-sensor_indices = 0:N-1; % Centered around zero
+avg_angle = mean(angles_deg);
+disp(['Avg estimated DOA: ', num2str(avg_angle), ' degrees']);
 
-% Compute the steering vectors
-% Broadcast the sensor indices and angle data properly
-steering_vectors = exp(1j * 2 * pi * (L / lambda) * sin(theta_scan).' * (0:N-1));
-
-disp(["Steering vectors size: ", size(steering_vectors)]);
-disp(["Sensor data size: ", size(sensor_data)]);
-
-% Beamforming
-beamforming_output = zeros(size(angles));
-for i = 1:length(angles)
-    beamforming_output(i) = sum(abs(steering_vectors(i,:) * sensor_data));
-end
-
-% Find the angle that maximizes beamforming output
-[~, idx] = max(beamforming_output);
-estimated_angle = angles(idx);
-
-fprintf("Estimated AoA: %.2f degrees\n", estimated_angle);
+% Create a plot of the estimated DoA
+figure;
+plot(angles_deg, 'o-');
+xlabel('Snapshot Index');
+ylabel('Estimated DoA (degrees)');
+title('MUSIC Estimated DoA');
+grid on;

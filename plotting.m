@@ -1,4 +1,4 @@
-sensor_data_2d = reshape(sensor_data, Nx, Ny, kgrid.Nt);
+sensor_data_2d = reshape(sensor_data, Nx, Ny, length(time_array));
 
 % Set N to the interval between frames you want to display (e.g., 10)
 N = 10;
@@ -9,7 +9,7 @@ max_pressure = max(sensor_data(:));
 
 figure;
 % Plot a sample frame to create the initial plot and color bar
-h = surf(kgrid.x_vec * 1e3, kgrid.y_vec * 1e3, sensor_data_2d(:, :, 1)); % Scale to mm
+h = surf(x_array * 1e3, y_array * 1e3, sensor_data_2d(:, :, 1)); % Scale to mm
 shading interp;  % Smooth the surface
 colormap(jet);
 colorbar;
@@ -25,7 +25,7 @@ zlabel('Pressure');
 title(['Time Step: 1']);
 
 % Loop through the time steps and update the surface plot
-for t = 1:N:kgrid.Nt
+for t = 1:N:length(time_array)
     % Update the surface plot with new data for the current time step
     set(h, 'ZData', sensor_data_2d(:, :, t)); % Update the Z data of the surface plot
     
